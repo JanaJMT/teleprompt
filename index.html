@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="sk">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Teleprompter</title>
+<style>
+  :root {
+    --bg: #0b0b0f;
+    --panel: #17171d;
+    --text: #f5f5f7;
+    --accent: #5b8cff;
+    --muted: #9a9aa5;
+    --border: #2a2a33;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    box-sizing: border-box;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg: #f4f4f7;
+      --panel: #ffffff;
+      --text: #16161a;
+      --accent: #3763e0;
+      --muted: #6b6b76;
+      --border: #dcdce3;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    height: 100%;
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+  }
+  #setup {
+    max-width: 760px;
+    margin: 0 auto;
+    padding: 24px 20px 40px;
+  }
+  h1 {
+    font-size: 1.4rem;
+    margin: 8px 0 20px;
+  }
+  label {
+    display: block;
+    font-size: 0.85rem;
+    color: var(--muted);
+    margin: 16px 0 6px;
+  }
+  textarea {
+    width: 100%;
+    min-height: 220px;
+    background: var(--panel);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px;
+    font-size: 1rem;
+    line-height: 1.5;
+    resize: vertical;
+  }
+  .row {
+    display: flex;
+    gap: 20px;
+    flex-wrap: wrap;
+  }
+  .row > div { flex: 1; min-width: 140px; }
+  input[type=range] { width: 100%; }
+  .valline {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.8rem;
+    color: var(--muted);
+  }
+  .toggle-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 16px;
+  }
+  button {
+    font-size: 1rem;
+    padding: 12px 20px;
+    border-radius: 10px;
+    border: none;
+    background: var(--accent);
+    color: white;
+    cursor: pointer;
+    margin-top: 24px;
+  }
+  button:active { opacity: 0.85; }
+  button.secondary {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text);
+  }
+
+  /* Prompter view */
+  #prompter {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: black;
+    color: white;
+    overflow: hidden;
+  }
+  #prompter.active { display: block; }
+  #camVideo {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: none;
+    z-index: 0;
+  }
+  #camVideo.on { display: block; }
+  #camVideo.front { transform: scaleX(-1); }
+  #camMsg {
+    position: fixed;
+    top: 50%;
+    left: 0; right: 0;
+    text-align: center;
+    color: rgba(255,255,255,0.6);
+    font-size: 0.85rem;
+    z-index: 0;
+    padding: 0 20px;
+  }
+  #scrollArea {
+    position: relative;
+    z-index: 1;
+    height: 100%;
+    overflow-y: auto;
+    scroll-behavior: auto;
+    padding: 0 6vw;
+    background: transparent;
+  }
+  #scrollArea.with-cam #scrollContent {
+    background: rgba(0,0,0,0.35);
+    border-radius: 12px;
+    text-shadow: 0 1px 6px rgba(0,0,0,0.8);
+  }
+  #scrollContent {
+    padding-top: 80vh;
+    padding-bottom: 80vh;
+    padding-left: 4vw;
+    padding-right: 4vw;
+    white-space: pre-wrap;
+    text-align: center;
+  }
+  #scrollContent.mirror { transform: scaleX(-1); }
+  #centerLine {
+    position: fixed;
+    left: 0; right: 0;
+    top: 50%;
+    height: 2px;
+    background: rgba(255,80,80,0.6);
+    pointer-events: none;
+  }
+  #controls {
+    position: fixed;
+    bottom: env(safe-area-inset-bottom, 0px);
+    left: 0; right: 0;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 8px;
+    padding: 10px 14px;
+    background: linear-gradient(to top, rgba(0,0,0,0.85), transparent);
+  }
+  #controls button {
+    margin: 0;
+    padding: 9px 14px;
+    font-size: 0.85rem;
+    background: rgba(255,255,255,0.12);
+    backdrop-filter: blur(6px);
+  }
+  #controls button.primary { background: var(--accent); }
+  #controls button.danger { background: #d3453f; }
+  #topBar {
+    position: fixed;
+    top: env(safe-area-inset-top, 0px);
+    left: 0; right: 0;
+    display: flex;
+    justify-content: space-between;
+    padding: 10px 16px;
+    font-size: 0.8rem;
+    color: rgba(255,255,255,0.6);
+  }
+</style>
+</head>
+<body>
+
+<div id="setup">
+  <h1>🎬 Teleprompter</h1>
+
+  <label for="script">Text</label>
+  <textarea id="script" placeholder="Sem vlož text, ktorý chceš čítať...">Vitaj v teleprompteri!
+
+Sem napíš alebo vlož svoj text.
+
+Nastav si rýchlosť posúvania, veľkosť písma a v prípade potreby zapni zrkadlový režim (pre sklo teleprompteru).
+
+Keď si pripravená/ý, klikni na "Spustiť".</textarea>
+
+  <div class="row">
+    <div>
+      <label>Veľkosť písma: <span id="fontVal">48</span>px</label>
+      <input type="range" id="fontSize" min="20" max="100" value="48">
+    </div>
+    <div>
+      <label>Rýchlosť posúvania: <span id="speedVal">3</span></label>
+      <input type="range" id="speed" min="1" max="10" value="3">
+      <div class="valline"><span>pomalšie</span><span>rýchlejšie</span></div>
+    </div>
+  </div>
+
+  <div class="toggle-row">
+    <input type="checkbox" id="mirror">
+    <label style="margin:0" for="mirror">Zrkadlový režim (pre sklo teleprompteru)</label>
+  </div>
+  <div class="toggle-row">
+    <input type="checkbox" id="centerLineToggle" checked>
+    <label style="margin:0" for="centerLineToggle">Zobraziť čiaru na čítanie</label>
+  </div>
+  <div class="toggle-row">
+    <input type="checkbox" id="cameraToggle" checked>
+    <label style="margin:0" for="cameraToggle">Zobraziť kameru na pozadí (predná/zadná)</label>
+  </div>
+
+  <button id="startBtn">▶ Spustiť</button>
+</div>
+
+<div id="prompter">
+  <video id="camVideo" autoplay playsinline muted></video>
+  <div id="camMsg"></div>
+  <div id="topBar">
+    <span>Medzerník = štart/pauza · Šípky ▲▼ = rýchlosť · Esc = späť</span>
+    <span id="recIndicator" style="display:none;">🔴 <span id="recTimer">00:00</span></span>
+    <span id="statusLabel">Pauza</span>
+  </div>
+  <div id="centerLine"></div>
+  <div id="scrollArea"><div id="scrollContent"></div></div>
+  <div id="controls">
+    <button id="playPause" class="primary">▶ Štart</button>
+    <button id="switchCam">🔄 Kamera</button>
+    <button id="restartBtn">⟲ Od začiatku</button>
+    <button id="slower">−</button>
+    <button id="faster">+</button>
+    <button id="recordBtn">⏺ Nahrávať</button>
+    <button id="cancelRecBtn" style="display:none;">🗑 Zrušiť</button>
+    <button id="saveRecBtn" style="display:none;" class="primary">💾 Uložiť</button>
+    <button id="exitBtn">✕ Späť</button>
+  </div>
+</div>
+
+<script>
+(function() {
+  const setup = document.getElementById('setup');
+  const prompter = document.getElementById('prompter');
+  const scriptEl = document.getElementById('script');
+  const fontSizeEl = document.getElementById('fontSize');
+  const fontVal = document.getElementById('fontVal');
+  const speedEl = document.getElementById('speed');
+  const speedVal = document.getElementById('speedVal');
+  const mirrorEl = document.getElementById('mirror');
+  const centerLineToggle = document.getElementById('centerLineToggle');
+  const startBtn = document.getElementById('startBtn');
+
+  const scrollArea = document.getElementById('scrollArea');
+  const scrollContent = document.getElementById('scrollContent');
+  const centerLine = document.getElementById('centerLine');
+  const playPause = document.getElementById('playPause');
+  const restartBtn = document.getElementById('restartBtn');
+  const slowerBtn = document.getElementById('slower');
+  const fasterBtn = document.getElementById('faster');
+  const exitBtn = document.getElementById('exitBtn');
+  const statusLabel = document.getElementById('statusLabel');
+  const cameraToggle = document.getElementById('cameraToggle');
+  const camVideo = document.getElementById('camVideo');
+  const camMsg = document.getElementById('camMsg');
+  const switchCamBtn = document.getElementById('switchCam');
+
+  let camStream = null;
+  let facingMode = 'user'; // 'user' = predná, 'environment' = zadná
+
+  async function startCamera(mode) {
+    stopCamera();
+    camMsg.textContent = 'Načítavam kameru…';
+    try {
+      camStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: mode } },
+        audio: true
+      });
+      camVideo.srcObject = camStream;
+      camVideo.classList.add('on');
+      camVideo.classList.toggle('front', mode === 'user');
+      scrollArea.classList.add('with-cam');
+      camMsg.textContent = '';
+    } catch (err) {
+      camVideo.classList.remove('on');
+      scrollArea.classList.remove('with-cam');
+      camMsg.textContent = 'Kamera nie je dostupná (skontroluj povolenia v prehliadači).';
+    }
+  }
+
+  function stopCamera() {
+    if (camStream) {
+      camStream.getTracks().forEach(t => t.stop());
+      camStream = null;
+    }
+  }
+
+  switchCamBtn.addEventListener('click', () => {
+    if (recordingState !== 'idle') return; // don't switch cams mid-recording
+    facingMode = facingMode === 'user' ? 'environment' : 'user';
+    startCamera(facingMode);
+  });
+
+  // ---- Recording ----
+  const recordBtn = document.getElementById('recordBtn');
+  const cancelRecBtn = document.getElementById('cancelRecBtn');
+  const saveRecBtn = document.getElementById('saveRecBtn');
+  const recIndicator = document.getElementById('recIndicator');
+  const recTimer = document.getElementById('recTimer');
+
+  let mediaRecorder = null;
+  let recordedChunks = [];
+  let recordingState = 'idle'; // idle | recording | paused
+  let recSeconds = 0;
+  let recIntervalId = null;
+  let chosenMime = null;
+
+  function pickMimeType() {
+    const candidates = [
+      'video/webm;codecs=vp9,opus',
+      'video/webm;codecs=vp8,opus',
+      'video/webm',
+      'video/mp4'
+    ];
+    for (const c of candidates) {
+      if (window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(c)) {
+        return c;
+      }
+    }
+    return null;
+  }
+
+  function formatTime(s) {
+    const m = Math.floor(s / 60).toString().padStart(2, '0');
+    const sec = (s % 60).toString().padStart(2, '0');
+    return m + ':' + sec;
+  }
+
+  function startTimer() {
+    recIntervalId = setInterval(() => {
+      recSeconds++;
+      recTimer.textContent = formatTime(recSeconds);
+    }, 1000);
+  }
+  function stopTimer() {
+    if (recIntervalId) clearInterval(recIntervalId);
+    recIntervalId = null;
+  }
+
+  function updateRecordingUI() {
+    if (recordingState === 'idle') {
+      recordBtn.textContent = '⏺ Nahrávať';
+      recordBtn.className = '';
+      cancelRecBtn.style.display = 'none';
+      saveRecBtn.style.display = 'none';
+      recIndicator.style.display = 'none';
+      switchCamBtn.disabled = false;
+    } else if (recordingState === 'recording') {
+      recordBtn.textContent = '⏸ Pozastaviť';
+      recordBtn.className = 'danger';
+      cancelRecBtn.style.display = 'inline-block';
+      saveRecBtn.style.display = 'inline-block';
+      recIndicator.style.display = 'inline';
+      switchCamBtn.disabled = true;
+    } else if (recordingState === 'paused') {
+      recordBtn.textContent = '▶ Pokračovať';
+      recordBtn.className = 'primary';
+      cancelRecBtn.style.display = 'inline-block';
+      saveRecBtn.style.display = 'inline-block';
+      recIndicator.style.display = 'inline';
+      switchCamBtn.disabled = true;
+    }
+  }
+
+  function beginRecording() {
+    if (!camStream) {
+      camMsg.textContent = 'Nahrávanie potrebuje aktívnu kameru.';
+      return;
+    }
+    chosenMime = pickMimeType();
+    if (!chosenMime) {
+      camMsg.textContent = 'Tento prehliadač nepodporuje nahrávanie videa.';
+      return;
+    }
+    recordedChunks = [];
+    recSeconds = 0;
+    recTimer.textContent = '00:00';
+    try {
+      mediaRecorder = new MediaRecorder(camStream, { mimeType: chosenMime });
+    } catch (err) {
+      camMsg.textContent = 'Nahrávanie sa nepodarilo spustiť.';
+      return;
+    }
+    mediaRecorder.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) recordedChunks.push(e.data);
+    };
+    mediaRecorder.start(1000);
+    recordingState = 'recording';
+    startTimer();
+    updateRecordingUI();
+  }
+
+  function pauseRecording() {
+    if (mediaRecorder && mediaRecorder.state === 'recording') {
+      mediaRecorder.pause();
+      recordingState = 'paused';
+      stopTimer();
+      updateRecordingUI();
+    }
+  }
+
+  function resumeRecording() {
+    if (mediaRecorder && mediaRecorder.state === 'paused') {
+      mediaRecorder.resume();
+      recordingState = 'recording';
+      startTimer();
+      updateRecordingUI();
+    }
+  }
+
+  function cancelRecording() {
+    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+      mediaRecorder.onstop = () => { recordedChunks = []; };
+      mediaRecorder.stop();
+    }
+    stopTimer();
+    recordingState = 'idle';
+    updateRecordingUI();
+  }
+
+  function saveRecording() {
+    if (!mediaRecorder || mediaRecorder.state === 'inactive') return;
+    mediaRecorder.onstop = () => {
+      stopTimer();
+      const blob = new Blob(recordedChunks, { type: chosenMime.split(';')[0] });
+      const url = URL.createObjectURL(blob);
+      const ext = chosenMime.includes('mp4') ? 'mp4' : 'webm';
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'teleprompter-nahravka-' + Date.now() + '.' + ext;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+      recordingState = 'idle';
+      updateRecordingUI();
+    };
+    mediaRecorder.stop();
+  }
+
+  recordBtn.addEventListener('click', () => {
+    if (recordingState === 'idle') beginRecording();
+    else if (recordingState === 'recording') pauseRecording();
+    else if (recordingState === 'paused') resumeRecording();
+  });
+  cancelRecBtn.addEventListener('click', cancelRecording);
+  saveRecBtn.addEventListener('click', saveRecording);
+
+  fontSizeEl.addEventListener('input', () => fontVal.textContent = fontSizeEl.value);
+  speedEl.addEventListener('input', () => speedVal.textContent = speedEl.value);
+
+  let playing = false;
+  let rafId = null;
+  let speed = parseInt(speedEl.value, 10);
+
+  function pxPerFrame() {
+    // speed 1..10 -> roughly 0.3..3.2 px per frame at 60fps
+    return 0.3 + (speed - 1) * 0.32;
+  }
+
+  function tick() {
+    if (!playing) return;
+    scrollArea.scrollTop += pxPerFrame();
+    rafId = requestAnimationFrame(tick);
+  }
+
+  function setPlaying(state) {
+    playing = state;
+    playPause.textContent = playing ? '⏸ Pauza' : '▶ Štart';
+    statusLabel.textContent = playing ? 'Prehráva sa' : 'Pauza';
+    if (playing) {
+      rafId = requestAnimationFrame(tick);
+    } else if (rafId) {
+      cancelAnimationFrame(rafId);
+    }
+  }
+
+  function openPrompter() {
+    scrollContent.textContent = scriptEl.value || '';
+    scrollContent.style.fontSize = fontSizeEl.value + 'px';
+    scrollContent.classList.toggle('mirror', mirrorEl.checked);
+    centerLine.style.display = centerLineToggle.checked ? 'block' : 'none';
+    speed = parseInt(speedEl.value, 10);
+    prompter.classList.add('active');
+    scrollArea.scrollTop = 0;
+    setPlaying(false);
+
+    switchCamBtn.style.display = cameraToggle.checked ? 'inline-block' : 'none';
+    recordBtn.style.display = cameraToggle.checked ? 'inline-block' : 'none';
+    recordingState = 'idle';
+    updateRecordingUI();
+    if (cameraToggle.checked) {
+      facingMode = 'user';
+      startCamera(facingMode);
+    } else {
+      camVideo.classList.remove('on');
+      scrollArea.classList.remove('with-cam');
+      camMsg.textContent = '';
+    }
+  }
+
+  function closePrompter() {
+    setPlaying(false);
+    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+      mediaRecorder.onstop = () => { recordedChunks = []; };
+      mediaRecorder.stop();
+    }
+    stopTimer();
+    recordingState = 'idle';
+    stopCamera();
+    camVideo.classList.remove('on');
+    scrollArea.classList.remove('with-cam');
+    prompter.classList.remove('active');
+  }
+
+  startBtn.addEventListener('click', openPrompter);
+  exitBtn.addEventListener('click', closePrompter);
+  playPause.addEventListener('click', () => setPlaying(!playing));
+  restartBtn.addEventListener('click', () => { scrollArea.scrollTop = 0; });
+  slowerBtn.addEventListener('click', () => { speed = Math.max(1, speed - 1); });
+  fasterBtn.addEventListener('click', () => { speed = Math.min(10, speed + 1); });
+
+  document.addEventListener('keydown', (e) => {
+    if (!prompter.classList.contains('active')) return;
+    if (e.code === 'Space') { e.preventDefault(); setPlaying(!playing); }
+    else if (e.code === 'Escape') { closePrompter(); }
+    else if (e.code === 'ArrowUp') { speed = Math.min(10, speed + 1); }
+    else if (e.code === 'ArrowDown') { speed = Math.max(1, speed - 1); }
+  });
+})();
+</script>
+
+</body>
+</html>
